@@ -35,6 +35,16 @@ Unlike review loop plugins that rely on OpenAI Codex, this plugin uses **GitHub 
 /plugin install copilot-review@copilot-review
 ```
 
+## Updating
+
+```bash
+# Pull the latest version
+/plugin marketplace update copilot-review
+
+# Reload to apply
+/reload-plugins
+```
+
 ## Prerequisites
 
 - [GitHub Copilot CLI](https://www.npmjs.com/package/@github/copilot) (`npm install -g @github/copilot`) — required for local review loop
