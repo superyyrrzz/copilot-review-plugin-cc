@@ -1,0 +1,17 @@
+{
+  "name": "copilot-review",
+  "owner": { "name": "superyyrrzz" },
+  "metadata": {
+    "description": "Automated code review loops using GitHub Copilot — PR-based and local CLI modes.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "copilot-review",
+      "description": "Automated code review loops using GitHub Copilot for Claude Code.",
+      "version": "1.0.0",
+      "author": { "name": "superyyrrzz" },
+      "source": "./plugins/copilot-review"
+    }
+  ]
+}
