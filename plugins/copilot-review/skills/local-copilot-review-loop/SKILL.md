@@ -1,5 +1,6 @@
 ---
 name: local-copilot-review-loop
+user-invocable: true
 description: >
   Run the local Copilot CLI to review code, fix findings, and re-review until clean.
   Use when user says "local copilot review", "copilot cli review", "ask copilot to review locally",

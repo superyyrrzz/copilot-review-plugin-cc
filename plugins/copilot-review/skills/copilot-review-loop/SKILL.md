@@ -1,5 +1,6 @@
 ---
 name: copilot-review-loop
+user-invocable: true
 description: >
   Monitor a PR for GitHub Copilot review feedback and iterate on it automatically.
   Use when user says "copilot review", "review loop", "watch this PR",
