@@ -4,9 +4,9 @@ Claude Code plugin for automated code review loops using GitHub Copilot.
 
 Unlike review loop plugins that rely on OpenAI Codex, this plugin uses **GitHub Copilot** as the review backend — both via the GitHub PR reviewer and the local Copilot CLI.
 
-## Skills
+## Commands
 
-### `copilot-review:copilot-review-loop`
+### `/copilot-review:copilot-review-loop`
 
 **PR-based cron loop.** Monitors a GitHub PR for Copilot review comments, fixes them, pushes, re-requests review, and repeats until Copilot reports "generated no comments."
 
@@ -15,7 +15,7 @@ Unlike review loop plugins that rely on OpenAI Codex, this plugin uses **GitHub 
 - Fetches unresolved threads via GraphQL, resolves them after fixing
 - Stops when Copilot is satisfied, PR is merged/closed, or safety valve triggers
 
-### `copilot-review:local-copilot-review-loop`
+### `/copilot-review:local-copilot-review-loop`
 
 **Local CLI iterative loop.** Runs the Copilot CLI locally via the Agent Client Protocol (ACP) to review code changes, fix findings, and re-run until clean — no PR required.
 
