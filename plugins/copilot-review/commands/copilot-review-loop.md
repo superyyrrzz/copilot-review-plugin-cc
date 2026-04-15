@@ -1,6 +1,7 @@
 ---
 description: Monitor a PR for GitHub Copilot review feedback and iterate on it automatically
 argument-hint: "[PR-number]"
+allowed-tools: Bash(gh:*) Bash(git:*) Bash(dotnet:*) Read Glob Grep
 ---
 
 # Copilot Review Loop

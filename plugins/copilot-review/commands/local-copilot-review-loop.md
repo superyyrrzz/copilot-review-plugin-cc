@@ -1,6 +1,7 @@
 ---
 description: Run the local Copilot CLI to review code, fix findings, and re-review until clean
 argument-hint: "[--base <ref>]"
+allowed-tools: Bash(node:*) Bash(which:*) Bash(where:*) Bash(git:*) Bash(dotnet:*) Read Glob Grep
 ---
 
 # Local Copilot CLI Review Loop
