@@ -6,7 +6,7 @@ allowed-tools: Bash(gh:*) Bash(git:*) Bash(dotnet:*) Read Glob Grep
 
 # Copilot Review Loop
 
-Non-blocking loop: schedule 5-min cron, fix Copilot comments each tick, repeat until Copilot says "generated no comments". After each push, you MUST manually request a Copilot review via the API (see Copilot API Reference section below) — `review_on_push` rulesets do not work on personal/free GitHub plans.
+Non-blocking loop: schedule 5-min cron, fix Copilot comments each tick, repeat until Copilot says "generated no comments" (or "generated no new comments"). After each push, you MUST manually request a Copilot review via the API (see Copilot API Reference section below) — `review_on_push` rulesets do not work on personal/free GitHub plans.
 
 Pass the PR number if provided: $ARGUMENTS
 
@@ -48,19 +48,19 @@ After all comments addressed: commit and push. Then **manually request a Copilot
 
 Fetch Copilot's latest review via REST (see API Reference below). Check two things:
 - **`commit_id`** matches HEAD SHA
-- **`body`** contains `"generated no comments"`
+- **`body`** contains `"generated no comments"` or `"generated no new comments"`
 
 If **both** match: Copilot reviewed the latest code and found nothing. **Cancel cron and report success.**
 
 If commit_id does not match HEAD: Copilot hasn't reviewed the latest push yet. **Return immediately** — let the next cron tick check again. Do NOT sleep or poll.
 
-If commit_id matches but body does NOT contain "generated no comments": Copilot reviewed but found issues:
+If commit_id matches but body does NOT contain either phrase: Copilot reviewed but found issues:
 - Re-fetch unresolved threads. If threads now exist, process them as in step 2.
 - If **no inline threads exist**, Copilot's feedback is only in the top-level review body. Surface the body text to the user, **cancel the cron via `CronDelete`**, and hand control back to the user — do not keep looping expecting inline comments that may never appear.
 
 ## Stop conditions
 
-- Copilot's latest review on HEAD contains "generated no comments"
+- Copilot's latest review on HEAD contains "generated no comments" or "generated no new comments"
 - PR merged/closed
 - User cancels via `CronDelete`
 - **Safety valve**: CronCreate auto-expires recurring jobs after 3 days. As an additional guard, stop after 20 cron iterations and surface a warning to the user if termination conditions were never met.
@@ -105,7 +105,7 @@ gh api repos/{OWNER}/{REPO}/pulls/{PR}/reviews --paginate \
   --jq '[.[] | select(.user.login == "copilot-pull-request-reviewer[bot]")] | sort_by(.submitted_at) | last | {commit_id: .commit_id, body: .body}'
 ```
 
-**Termination signal**: If `commit_id` matches HEAD AND `body` contains `"generated no comments"`, Copilot is satisfied — the loop is done.
+**Termination signal**: If `commit_id` matches HEAD AND `body` contains `"generated no comments"` or `"generated no new comments"`, Copilot is satisfied — the loop is done.
 
 ### Fetch unresolved threads (GraphQL)
 
