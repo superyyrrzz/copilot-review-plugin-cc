@@ -16,7 +16,7 @@ Additional context from user: $ARGUMENTS
 Use the ACP companion script for structured, session-based reviews:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/local-copilot-review-loop/scripts/copilot-acp-companion.mjs" review --base <base_ref>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" review --base <base_ref>
 ```
 
 **Options:**
@@ -30,13 +30,13 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/local-copilot-review-loop/scripts/copilot-acp
 **Examples:**
 ```bash
 # Review changes against main branch
-node "${CLAUDE_PLUGIN_ROOT}/skills/local-copilot-review-loop/scripts/copilot-acp-companion.mjs" review --base main
+node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" review --base main
 
 # Review staged and unstaged changes vs HEAD (untracked files are not included)
-node "${CLAUDE_PLUGIN_ROOT}/skills/local-copilot-review-loop/scripts/copilot-acp-companion.mjs" review
+node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" review
 
 # JSON output with focus
-node "${CLAUDE_PLUGIN_ROOT}/skills/local-copilot-review-loop/scripts/copilot-acp-companion.mjs" review --base main --json "focus on error handling"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" review --base main --json "focus on error handling"
 ```
 
 - The companion script manages the ACP lifecycle internally (connect, session, prompt, cleanup)
