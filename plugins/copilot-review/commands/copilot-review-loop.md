@@ -65,6 +65,28 @@ If commit_id matches but body does NOT contain either phrase: Copilot reviewed b
 - User cancels via `CronDelete`
 - **Safety valve**: CronCreate auto-expires recurring jobs after 3 days. As an additional guard, stop after 20 cron iterations and surface a warning to the user if termination conditions were never met.
 
+## Mandatory verification before declaring success
+
+Before stopping the loop and reporting "clean pass," you MUST run this verification command and include the output in your response:
+
+```bash
+HEAD_SHA=$(gh pr view {PR} --repo {OWNER}/{REPO} --json headRefOid --jq '.headRefOid')
+REVIEW_JSON=$(gh api repos/{OWNER}/{REPO}/pulls/{PR}/reviews --paginate \
+  --jq '[.[] | select(.user.login == "copilot-pull-request-reviewer[bot]")] | sort_by(.submitted_at) | last | {commit_id: .commit_id, body_snippet: (.body[:200])}')
+REVIEW_COMMIT=$(echo "$REVIEW_JSON" | jq -r '.commit_id')
+echo "HEAD:   $HEAD_SHA"
+echo "REVIEW: $REVIEW_COMMIT"
+echo "MATCH:  $([ "$HEAD_SHA" = "$REVIEW_COMMIT" ] && echo 'YES' || echo 'NO — loop must continue')"
+echo "$REVIEW_JSON" | jq -r '.body_snippet'
+```
+
+**Interpret the output:**
+- If MATCH is `NO` — Copilot has not reviewed HEAD yet. Do NOT stop. Wait for the next cron tick or re-request a review.
+- If MATCH is `YES` but body does NOT contain "generated no comments" / "generated no new comments" — Copilot found issues. Do NOT stop.
+- If MATCH is `YES` AND body contains the phrase — loop is done. Report success.
+
+**This command is not optional.** Never declare the loop complete based on comment count alone or based on a review targeting a non-HEAD commit.
+
 ---
 
 ## Copilot API Reference
