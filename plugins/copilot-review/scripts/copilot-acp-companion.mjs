@@ -508,8 +508,8 @@ async function handleReview(argv) {
       summary: `Review ${base ?? "working-tree"}`,
       ...(sessionId ? { sessionId } : {}),
     };
-    // Store the original argv so task-worker can replay
-    const request = { argv: argv.filter((a) => a !== "--background") };
+    // Store the original argv, stripping all --background variants to prevent re-enqueue
+    const request = { argv: argv.filter((a) => !a.startsWith("--background")) };
     const result = enqueueBackgroundTask(cwd, job, request);
     // Output job info to stdout so caller can parse it
     console.log(JSON.stringify({
