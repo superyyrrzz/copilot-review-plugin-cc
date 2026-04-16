@@ -180,10 +180,10 @@ export function enqueueBackgroundTask(cwd, job, request) {
     return { jobId: job.id, logFile, pid: null };
   }
 
-  // Update index and job file with actual PID now that child is spawned
+  // Update state index with actual PID now that child is spawned.
+  // Only the index is updated — avoid read-modify-write on the per-job file
+  // which can race with the worker's initial "running" write and clobber it.
   const pid = child.pid ?? null;
-  // Only update PID in the state index — avoid read-modify-write on the per-job
-  // file which can race with the worker's initial "running" write and clobber it.
   upsertJob(cwd, { id: job.id, pid });
 
   return { jobId: job.id, logFile, pid: child.pid };

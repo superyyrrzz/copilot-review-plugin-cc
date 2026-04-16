@@ -189,7 +189,22 @@ export function upsertJob(cwd, jobPatch) {
 export function writeJobFile(cwd, jobId, payload) {
   ensureStateDir(cwd);
   const file = resolveJobFile(cwd, jobId);
-  fs.writeFileSync(file, JSON.stringify(payload, null, 2) + "\n", "utf8");
+  const content = JSON.stringify(payload, null, 2) + "\n";
+  // Atomic write via temp file + rename to avoid partial reads
+  const tmpFile = file + `.tmp.${process.pid}.${Date.now()}`;
+  try {
+    fs.writeFileSync(tmpFile, content, "utf8");
+    try {
+      fs.renameSync(tmpFile, file);
+    } catch {
+      try { fs.unlinkSync(file); } catch {}
+      fs.renameSync(tmpFile, file);
+    }
+  } catch (err) {
+    try { fs.unlinkSync(tmpFile); } catch {}
+    // Fall back to direct write
+    fs.writeFileSync(file, content, "utf8");
+  }
   return file;
 }
 
