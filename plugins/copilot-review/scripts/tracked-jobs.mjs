@@ -186,7 +186,7 @@ export function enqueueBackgroundTask(cwd, job, request) {
   const pid = child.pid ?? null;
   upsertJob(cwd, { id: job.id, pid });
 
-  return { jobId: job.id, logFile, pid: child.pid };
+  return { jobId: job.id, logFile, pid };
 }
 
 // ---------------------------------------------------------------------------

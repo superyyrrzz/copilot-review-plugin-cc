@@ -133,13 +133,27 @@ export function updateState(cwd, mutator) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const state = readState(cwd);
     mutator(state);
-    // Prune to MAX_JOBS, sorted by updatedAt desc
+    // Prune to MAX_JOBS, sorted by updatedAt desc — skip active jobs
     state.jobs.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
-    const pruned = state.jobs.splice(MAX_JOBS);
-    // Delete pruned job files
-    for (const job of pruned) {
-      try { fs.unlinkSync(resolveJobFile(cwd, job.id)); } catch {}
-      try { fs.unlinkSync(resolveJobLogFile(cwd, job.id)); } catch {}
+    if (state.jobs.length > MAX_JOBS) {
+      const keep = [];
+      const candidates = [];
+      for (const job of state.jobs) {
+        if (isActiveJobStatus(job.status)) {
+          keep.push(job);
+        } else {
+          candidates.push(job);
+        }
+      }
+      // Keep all active jobs + newest finished jobs up to MAX_JOBS
+      const maxFinished = Math.max(0, MAX_JOBS - keep.length);
+      const pruned = candidates.splice(maxFinished);
+      state.jobs = [...keep, ...candidates];
+      // Delete pruned job files
+      for (const job of pruned) {
+        try { fs.unlinkSync(resolveJobFile(cwd, job.id)); } catch {}
+        try { fs.unlinkSync(resolveJobLogFile(cwd, job.id)); } catch {}
+      }
     }
     // Atomic write via temp file + rename
     // On Windows, renameSync over existing file may fail (EPERM/EACCES).
