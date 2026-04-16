@@ -28,7 +28,6 @@ import {
   createJobLogFile,
   nowIso,
   listJobs,
-  findLatestJob,
   isActiveJobStatus,
 } from "./state.mjs";
 import {
@@ -703,6 +702,20 @@ async function handleReview(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// Safe job lookup — validates jobId and returns null on invalid input
+// ---------------------------------------------------------------------------
+
+function safeReadJob(workspaceRoot, jobId) {
+  try {
+    return readStoredJob(workspaceRoot, jobId);
+  } catch (err) {
+    console.log(`Invalid job ID: ${jobId}`);
+    process.exitCode = 1;
+    return undefined; // distinct from null (not found) — signals caller to return early
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Status handler
 // ---------------------------------------------------------------------------
 
@@ -722,7 +735,8 @@ async function handleStatus(argv) {
 
   if (jobId) {
     // Single job view
-    const job = readStoredJob(workspaceRoot, jobId);
+    const job = safeReadJob(workspaceRoot, jobId);
+    if (job === undefined) return; // invalid ID
     if (!job) {
       console.log(`Job not found: ${jobId}`);
       process.exitCode = 1;
@@ -846,7 +860,8 @@ async function handleResult(argv) {
     return;
   }
 
-  const job = readStoredJob(workspaceRoot, jobId);
+  const job = safeReadJob(workspaceRoot, jobId);
+  if (job === undefined) return; // invalid ID
   if (!job) {
     console.log(`Job not found: ${jobId}`);
     process.exitCode = 1;
@@ -906,7 +921,8 @@ async function handleCancel(argv) {
 }
 
 async function cancelJob(workspaceRoot, jobId) {
-  const job = readStoredJob(workspaceRoot, jobId);
+  const job = safeReadJob(workspaceRoot, jobId);
+  if (job === undefined) return; // invalid ID
   if (!job) {
     console.log(`Job not found: ${jobId}`);
     process.exitCode = 1;
