@@ -1001,27 +1001,48 @@ async function handleTaskWorker(argv) {
     return;
   }
 
+  // Check if job was cancelled before we start
+  if (storedJob.status === "cancelled") {
+    process.stderr.write(`task-worker: job ${jobId} was cancelled, skipping\n`);
+    return;
+  }
+
   const logFile = storedJob.logFile ?? createJobLogFile(workspaceRoot, jobId, "Copilot Review");
   appendLogLine(logFile, "Task worker started.");
 
   await runTrackedJob(
     { ...storedJob, workspaceRoot, logFile },
     async () => {
-      // Replay the review with --job-id so it writes to our log file
-      const reviewArgv = [...(request.argv ?? []), "--job-id", jobId];
+      // Re-check cancellation before expensive work
+      const current = readStoredJob(workspaceRoot, jobId);
+      if (current && current.status === "cancelled") {
+        appendLogLine(logFile, "Job was cancelled before review started.");
+        return { exitStatus: 1, payload: null, rendered: "Cancelled.", summary: "Cancelled" };
+      }
+
+      // Replay the review with --job-id and --json so errors are captured in stdout
+      const reviewArgv = [...(request.argv ?? []), "--job-id", jobId, "--json"];
 
       // Capture the review output by temporarily redirecting stdout
       let reviewOutput = "";
-      const origWrite = process.stdout.write.bind(process.stdout);
+      let reviewStderr = "";
+      const origStdoutWrite = process.stdout.write.bind(process.stdout);
+      const origStderrWrite = process.stderr.write.bind(process.stderr);
       process.stdout.write = (chunk) => { reviewOutput += chunk; return true; };
+      const origStderr = process.stderr.write;
+      process.stderr.write = (chunk) => {
+        reviewStderr += chunk;
+        return origStderrWrite(chunk);
+      };
 
       try {
         await handleReview(reviewArgv);
       } finally {
-        process.stdout.write = origWrite;
+        process.stdout.write = origStdoutWrite;
+        process.stderr.write = origStderr;
       }
 
-      // Parse the output
+      // Parse the output — always JSON since we added --json
       let payload = null;
       let rendered = reviewOutput.trim();
       try {
@@ -1029,6 +1050,12 @@ async function handleTaskWorker(argv) {
         rendered = payload.review ?? rendered;
       } catch {
         payload = { review: rendered };
+      }
+
+      // If the review failed, capture error info
+      const exitStatus = process.exitCode ?? 0;
+      if (exitStatus !== 0 && !payload.error && reviewStderr) {
+        payload.error = reviewStderr.trim().split("\n").pop();
       }
 
       return {

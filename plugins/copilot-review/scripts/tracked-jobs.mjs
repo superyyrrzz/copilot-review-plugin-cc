@@ -154,9 +154,15 @@ export function enqueueBackgroundTask(cwd, job, request) {
   });
   child.unref();
 
-  // Update index with actual PID (avoid full job file rewrite to prevent
-  // overwriting worker's state if it has already started)
-  upsertJob(cwd, { id: job.id, pid: child.pid ?? null });
+  // Update index and job file with actual PID now that child is spawned
+  const pid = child.pid ?? null;
+  upsertJob(cwd, { id: job.id, pid });
+  // Also update per-job file so cancelJob can read the PID
+  const stored = readStoredJob(cwd, job.id);
+  if (stored) {
+    stored.pid = pid;
+    writeJobFile(cwd, job.id, stored);
+  }
 
   return { jobId: job.id, logFile, pid: child.pid };
 }
