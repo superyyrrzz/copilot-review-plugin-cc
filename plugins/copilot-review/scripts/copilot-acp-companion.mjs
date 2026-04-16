@@ -838,14 +838,15 @@ async function handleResult(argv) {
 
   if (!jobId) {
     // Find latest completed job
-    const latest = findLatestJob(workspaceRoot);
-    if (!latest) {
-      console.log("No review jobs found.");
+    const jobs = listJobs(workspaceRoot);
+    const completed = jobs.find((j) => j.status === "completed");
+    if (!completed) {
+      console.log("No completed review jobs found.");
       process.exitCode = 1;
       return;
     }
-    const job = readStoredJob(workspaceRoot, latest.id);
-    printJobResult(job ?? latest);
+    const job = readStoredJob(workspaceRoot, completed.id);
+    printJobResult(job ?? completed);
     return;
   }
 
@@ -922,10 +923,17 @@ async function cancelJob(workspaceRoot, jobId) {
   // Kill the process
   const killed = terminateProcessTree(job.pid);
 
+  // Re-read job after kill to avoid clobbering a completed result
+  const current = readStoredJob(workspaceRoot, jobId) ?? job;
+  if (!isActiveJobStatus(current.status)) {
+    console.log(`Job ${jobId} completed (${current.status}) before cancel took effect.`);
+    return;
+  }
+
   // Write cancelled state
   const completedAt = nowIso();
   writeJobFile(workspaceRoot, jobId, {
-    ...job,
+    ...current,
     status: "cancelled",
     phase: "cancelled",
     pid: null,

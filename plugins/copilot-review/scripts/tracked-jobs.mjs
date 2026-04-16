@@ -124,6 +124,18 @@ export function enqueueBackgroundTask(cwd, job, request) {
   const logFile = createJobLogFile(cwd, job.id, job.title ?? "Copilot Review");
   appendLogLine(logFile, "Queued for background execution.");
 
+  // Write queued state BEFORE spawning so the child can always find the job
+  const queuedRecord = {
+    ...job,
+    status: "queued",
+    phase: "queued",
+    pid: null,
+    logFile,
+    request,
+  };
+  writeJobFile(cwd, job.id, queuedRecord);
+  upsertJob(cwd, queuedRecord);
+
   // Spawn detached child running task-worker subcommand
   const child = spawn(process.execPath, [
     COMPANION_SCRIPT,
@@ -142,17 +154,13 @@ export function enqueueBackgroundTask(cwd, job, request) {
   });
   child.unref();
 
-  // Write queued state
-  const queuedRecord = {
-    ...job,
-    status: "queued",
-    phase: "queued",
-    pid: child.pid ?? null,
-    logFile,
-    request,
-  };
-  writeJobFile(cwd, job.id, queuedRecord);
-  upsertJob(cwd, queuedRecord);
+  // Update with actual PID now that child is spawned
+  upsertJob(cwd, { id: job.id, pid: child.pid ?? null });
+  const stored = readStoredJob(cwd, job.id);
+  if (stored) {
+    stored.pid = child.pid ?? null;
+    writeJobFile(cwd, job.id, stored);
+  }
 
   return { jobId: job.id, logFile, pid: child.pid };
 }

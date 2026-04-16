@@ -53,11 +53,23 @@ function resolveJobsDir(cwd) {
 }
 
 function resolveJobFile(cwd, jobId) {
+  validateJobId(jobId);
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
 }
 
 function resolveJobLogFile(cwd, jobId) {
+  validateJobId(jobId);
   return path.join(resolveJobsDir(cwd), `${jobId}.log`);
+}
+
+function validateJobId(jobId) {
+  if (!jobId || typeof jobId !== "string") {
+    throw new Error("Invalid job ID: must be a non-empty string");
+  }
+  // Reject path traversal, separators, and non-alphanumeric except dash
+  if (/[^a-zA-Z0-9\-]/.test(jobId) || jobId.includes("..")) {
+    throw new Error(`Invalid job ID: "${jobId}" contains disallowed characters`);
+  }
 }
 
 function resolveStateFile(cwd) {
@@ -104,18 +116,34 @@ export function readState(cwd) {
 
 export function updateState(cwd, mutator) {
   ensureStateDir(cwd);
-  const state = readState(cwd);
-  mutator(state);
-  // Prune to MAX_JOBS, sorted by updatedAt desc
-  state.jobs.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
-  const pruned = state.jobs.splice(MAX_JOBS);
-  // Delete pruned job files
-  for (const job of pruned) {
-    try { fs.unlinkSync(resolveJobFile(cwd, job.id)); } catch {}
-    try { fs.unlinkSync(resolveJobLogFile(cwd, job.id)); } catch {}
+  const stateFile = resolveStateFile(cwd);
+
+  // Retry loop for concurrent access
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const state = readState(cwd);
+    mutator(state);
+    // Prune to MAX_JOBS, sorted by updatedAt desc
+    state.jobs.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+    const pruned = state.jobs.splice(MAX_JOBS);
+    // Delete pruned job files
+    for (const job of pruned) {
+      try { fs.unlinkSync(resolveJobFile(cwd, job.id)); } catch {}
+      try { fs.unlinkSync(resolveJobLogFile(cwd, job.id)); } catch {}
+    }
+    // Atomic write via temp file + rename
+    const tmpFile = stateFile + `.tmp.${process.pid}.${Date.now()}`;
+    try {
+      fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2) + "\n", "utf8");
+      fs.renameSync(tmpFile, stateFile);
+      return state;
+    } catch (err) {
+      try { fs.unlinkSync(tmpFile); } catch {}
+      if (attempt < 2) continue;
+      // Last attempt: fall back to direct write
+      fs.writeFileSync(stateFile, JSON.stringify(state, null, 2) + "\n", "utf8");
+      return state;
+    }
   }
-  fs.writeFileSync(resolveStateFile(cwd), JSON.stringify(state, null, 2) + "\n", "utf8");
-  return state;
 }
 
 // ---------------------------------------------------------------------------
