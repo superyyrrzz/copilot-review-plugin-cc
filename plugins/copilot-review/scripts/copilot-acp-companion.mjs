@@ -938,8 +938,11 @@ async function cancelJob(workspaceRoot, jobId) {
     return;
   }
 
-  // Kill the process
-  const killed = terminateProcessTree(job.pid);
+  // Kill the process — PID may be in per-job file or state index
+  const indexJobs = listJobs(workspaceRoot, { all: true });
+  const indexEntry = indexJobs.find((j) => j.id === jobId);
+  const pid = job.pid ?? indexEntry?.pid ?? null;
+  const killed = terminateProcessTree(pid);
 
   // Re-read job after kill to avoid clobbering a completed result
   const current = readStoredJob(workspaceRoot, jobId) ?? job;
@@ -949,12 +952,12 @@ async function cancelJob(workspaceRoot, jobId) {
   }
 
   // If kill failed and process may still be running, don't mark as cancelled
-  if (!killed && current.pid) {
+  if (!killed && pid) {
     // Check if process is actually still alive
     let alive = false;
-    try { process.kill(current.pid, 0); alive = true; } catch {}
+    try { process.kill(pid, 0); alive = true; } catch {}
     if (alive) {
-      console.log(`Failed to terminate process ${current.pid} for job ${jobId}. Job is still running.`);
+      console.log(`Failed to terminate process ${pid} for job ${jobId}. Job is still running.`);
       return;
     }
   }
