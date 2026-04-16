@@ -3,7 +3,6 @@
  * progress updates, and background task spawning.
  */
 
-import fs from "node:fs";
 import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -15,7 +14,6 @@ import {
   appendLogLine,
   appendLogBlock,
   nowIso,
-  isActiveJobStatus,
 } from "./state.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -34,6 +32,9 @@ export function createJobProgressUpdater(cwd, jobId) {
       // Only update if job file still exists (guard against pruned jobs)
       const stored = readStoredJob(cwd, jobId);
       if (!stored) return;
+      // Update both state index and per-job file so status <id> shows live phase
+      stored.phase = phase;
+      writeJobFile(cwd, jobId, stored);
       upsertJob(cwd, { id: jobId, phase });
     } catch {}
   };

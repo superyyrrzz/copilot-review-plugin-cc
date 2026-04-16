@@ -21,7 +21,6 @@ import path from "node:path";
 import fs from "node:fs";
 import {
   generateJobId,
-  readState,
   readStoredJob,
   upsertJob,
   writeJobFile,
@@ -31,7 +30,6 @@ import {
   listJobs,
   findLatestJob,
   isActiveJobStatus,
-  resolveWorkspaceRoot,
 } from "./state.mjs";
 import {
   runTrackedJob,
@@ -808,13 +806,6 @@ function printJobTable(jobs) {
   for (const r of rows) {
     console.log(`| ${r.id} | ${r.status} | ${r.phase} | ${r.elapsed} | ${r.summary} |`);
   }
-
-  const active = jobs.filter((j) => isActiveJobStatus(j.status));
-  if (active.length > 0) {
-    console.log(`\nActive jobs: ${active.map((j) => j.id).join(", ")}`);
-    console.log(`Check status: node copilot-acp-companion.mjs status <job-id>`);
-    console.log(`Wait for completion: node copilot-acp-companion.mjs status <job-id> --wait`);
-  }
 }
 
 function formatDuration(ms) {
@@ -1066,7 +1057,7 @@ async function handleTaskWorker(argv) {
         exitStatus: process.exitCode ?? 0,
         payload,
         rendered,
-        summary: `Review ${storedJob.summary ?? "complete"}`,
+        summary: storedJob.summary ?? "Review complete",
       };
     },
     { logFile }
