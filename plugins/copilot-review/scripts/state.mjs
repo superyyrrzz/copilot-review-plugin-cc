@@ -47,7 +47,9 @@ function resolveStateDir(cwd) {
   if (_stateDirCache.has(cwd)) return _stateDirCache.get(cwd);
   const root = resolveWorkspaceRoot(cwd);
   const basename = path.basename(root);
-  const hash = createHash("sha256").update(fs.realpathSync(root)).digest("hex").slice(0, 16);
+  let realRoot;
+  try { realRoot = fs.realpathSync(root); } catch { realRoot = path.resolve(root); }
+  const hash = createHash("sha256").update(realRoot).digest("hex").slice(0, 16);
   const slug = `${basename}-${hash}`;
 
   const stateRoot = process.env.CLAUDE_PLUGIN_DATA
