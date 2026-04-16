@@ -953,9 +953,12 @@ async function cancelJob(workspaceRoot, jobId) {
 
   // If kill failed and process may still be running, don't mark as cancelled
   if (!killed && pid) {
-    // Check if process is actually still alive
+    // Check if process is actually still alive — validate PID first
+    const numPid = Number(pid);
     let alive = false;
-    try { process.kill(pid, 0); alive = true; } catch {}
+    if (Number.isInteger(numPid) && numPid > 0) {
+      try { process.kill(numPid, 0); alive = true; } catch {}
+    }
     if (alive) {
       console.log(`Failed to terminate process ${pid} for job ${jobId}. Job is still running.`);
       return;

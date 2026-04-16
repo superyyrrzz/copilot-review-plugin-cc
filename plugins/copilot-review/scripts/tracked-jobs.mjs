@@ -53,7 +53,19 @@ export async function runTrackedJob(job, runner, { logFile } = {}) {
     logFile: logFile ?? job.logFile ?? null,
   };
   writeJobFile(cwd, job.id, runningRecord);
-  upsertJob(cwd, runningRecord);
+  // Only upsert index-relevant fields — keep state.json lightweight
+  upsertJob(cwd, {
+    id: job.id,
+    kind: runningRecord.kind,
+    title: runningRecord.title,
+    status: "running",
+    startedAt: runningRecord.startedAt,
+    phase: "starting",
+    pid: process.pid,
+    logFile: runningRecord.logFile,
+    summary: runningRecord.summary ?? null,
+    ...(runningRecord.sessionId ? { sessionId: runningRecord.sessionId } : {}),
+  });
 
   try {
     const execution = await runner();
@@ -138,7 +150,19 @@ export function enqueueBackgroundTask(cwd, job, request) {
     request,
   };
   writeJobFile(cwd, job.id, queuedRecord);
-  upsertJob(cwd, queuedRecord);
+  // Only upsert index-relevant fields — keep large payloads like `request`
+  // exclusively in the per-job file to keep state.json lightweight.
+  upsertJob(cwd, {
+    id: job.id,
+    kind: job.kind,
+    title: job.title,
+    status: "queued",
+    phase: "queued",
+    pid: null,
+    logFile,
+    summary: job.summary ?? null,
+    ...(job.sessionId ? { sessionId: job.sessionId } : {}),
+  });
 
   // Spawn detached child running task-worker subcommand
   let child;
