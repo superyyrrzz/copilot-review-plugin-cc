@@ -154,13 +154,9 @@ export function enqueueBackgroundTask(cwd, job, request) {
   });
   child.unref();
 
-  // Update with actual PID now that child is spawned
+  // Update index with actual PID (avoid full job file rewrite to prevent
+  // overwriting worker's state if it has already started)
   upsertJob(cwd, { id: job.id, pid: child.pid ?? null });
-  const stored = readStoredJob(cwd, job.id);
-  if (stored) {
-    stored.pid = child.pid ?? null;
-    writeJobFile(cwd, job.id, stored);
-  }
 
   return { jobId: job.id, logFile, pid: child.pid };
 }
@@ -171,16 +167,19 @@ export function enqueueBackgroundTask(cwd, job, request) {
 
 export function terminateProcessTree(pid) {
   if (!pid) return false;
+  // Validate PID is a positive integer to prevent injection
+  const numPid = Number(pid);
+  if (!Number.isInteger(numPid) || numPid <= 0) return false;
   try {
     if (process.platform === "win32") {
-      execSync(`taskkill /F /T /PID ${pid}`, { stdio: "ignore" });
+      execSync(`taskkill /F /T /PID ${numPid}`, { stdio: "ignore" });
     } else {
-      process.kill(-pid, "SIGTERM");
+      process.kill(-numPid, "SIGTERM");
     }
     return true;
   } catch {
     try {
-      process.kill(pid, "SIGTERM");
+      process.kill(numPid, "SIGTERM");
       return true;
     } catch {
       return false;

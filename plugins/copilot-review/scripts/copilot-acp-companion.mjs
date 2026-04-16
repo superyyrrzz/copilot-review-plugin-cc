@@ -837,8 +837,9 @@ async function handleResult(argv) {
   const jobId = positionals[0] ?? null;
 
   if (!jobId) {
-    // Find latest completed job
-    const jobs = listJobs(workspaceRoot);
+    // Find latest completed job in current session
+    const sessionId = process.env.COPILOT_REVIEW_SESSION_ID || undefined;
+    const jobs = listJobs(workspaceRoot, { sessionId });
     const completed = jobs.find((j) => j.status === "completed");
     if (!completed) {
       console.log("No completed review jobs found.");
@@ -894,8 +895,10 @@ async function handleCancel(argv) {
   const jobId = positionals[0] ?? null;
 
   if (!jobId) {
-    // Cancel latest active job
-    const active = findLatestJob(workspaceRoot, { activeOnly: true });
+    // Cancel latest active job in current session
+    const sessionId = process.env.COPILOT_REVIEW_SESSION_ID || undefined;
+    const jobs = listJobs(workspaceRoot, { sessionId });
+    const active = jobs.find((j) => isActiveJobStatus(j.status));
     if (!active) {
       console.log("No active review jobs to cancel.");
       return;
@@ -928,6 +931,17 @@ async function cancelJob(workspaceRoot, jobId) {
   if (!isActiveJobStatus(current.status)) {
     console.log(`Job ${jobId} completed (${current.status}) before cancel took effect.`);
     return;
+  }
+
+  // If kill failed and process may still be running, don't mark as cancelled
+  if (!killed && current.pid) {
+    // Check if process is actually still alive
+    let alive = false;
+    try { process.kill(current.pid, 0); alive = true; } catch {}
+    if (alive) {
+      console.log(`Failed to terminate process ${current.pid} for job ${jobId}. Job is still running.`);
+      return;
+    }
   }
 
   // Write cancelled state
