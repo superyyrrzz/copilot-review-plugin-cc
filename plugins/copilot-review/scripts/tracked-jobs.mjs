@@ -9,6 +9,7 @@ import path from "node:path";
 import {
   writeJobFile,
   upsertJob,
+  readStoredJob,
   createJobLogFile,
   appendLogLine,
   appendLogBlock,
@@ -69,6 +70,14 @@ export async function runTrackedJob(job, runner, { logFile } = {}) {
 
   try {
     const execution = await runner();
+
+    // Check if job was cancelled while the runner was executing.
+    // If so, preserve the cancelled state rather than overwriting it.
+    const currentJob = readStoredJob(cwd, job.id);
+    if (currentJob && currentJob.status === "cancelled") {
+      return execution;
+    }
+
     const completionStatus = execution.exitStatus === 0 ? "completed" : "failed";
     const completedAt = nowIso();
 

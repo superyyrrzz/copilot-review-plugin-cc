@@ -712,7 +712,7 @@ function safeReadJob(workspaceRoot, jobId) {
   try {
     return readStoredJob(workspaceRoot, jobId);
   } catch (err) {
-    console.log(`Invalid job ID: ${jobId}`);
+    console.error(`Invalid job ID: ${jobId}`);
     process.exitCode = 1;
     return undefined; // distinct from null (not found) — signals caller to return early
   }
