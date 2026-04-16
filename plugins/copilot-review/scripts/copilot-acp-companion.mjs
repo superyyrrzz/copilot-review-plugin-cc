@@ -509,12 +509,14 @@ async function handleReview(argv) {
     const request = { argv: argv.filter((a) => !a.startsWith("--background")) };
     const result = enqueueBackgroundTask(cwd, job, request);
     // Output job info to stdout so caller can parse it
+    const spawnFailed = result.pid == null;
     console.log(JSON.stringify({
       jobId: id,
-      status: "queued",
+      status: spawnFailed ? "failed" : "queued",
       logFile: result.logFile,
       pid: result.pid,
     }));
+    if (spawnFailed) process.exitCode = 1;
     return;
   }
 
@@ -732,7 +734,8 @@ async function handleStatus(argv) {
   const jobId = positionals[0] ?? null;
   const waitMode = Boolean(options.wait);
   const showAll = Boolean(options.all);
-  const waitTimeout = Number(options["timeout-ms"]) || 240000;
+  const rawTimeout = options["timeout-ms"] != null ? Number(options["timeout-ms"]) : NaN;
+  const waitTimeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 240000;
 
   if (jobId) {
     // Single job view
