@@ -142,14 +142,19 @@ export function updateState(cwd, mutator) {
       try { fs.unlinkSync(resolveJobLogFile(cwd, job.id)); } catch {}
     }
     // Atomic write via temp file + rename
-    // On Windows, renameSync fails when the target exists; unlink first.
+    // On Windows, renameSync over existing file may fail (EPERM/EACCES).
+    // Try rename first; on failure, unlink target then retry rename.
     const tmpFile = stateFile + `.tmp.${process.pid}.${Date.now()}`;
     try {
       fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2) + "\n", "utf8");
-      if (process.platform === "win32") {
+      try {
+        fs.renameSync(tmpFile, stateFile);
+      } catch (renameErr) {
+        // Windows fallback: unlink then rename (brief ENOENT window acceptable
+        // since readState already falls back to defaultState on read errors)
         try { fs.unlinkSync(stateFile); } catch {}
+        fs.renameSync(tmpFile, stateFile);
       }
-      fs.renameSync(tmpFile, stateFile);
       return state;
     } catch (err) {
       try { fs.unlinkSync(tmpFile); } catch {}

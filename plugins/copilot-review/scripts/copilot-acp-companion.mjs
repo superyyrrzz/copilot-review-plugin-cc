@@ -850,17 +850,17 @@ async function handleResult(argv) {
   const jobId = positionals[0] ?? null;
 
   if (!jobId) {
-    // Find latest completed job in current session
+    // Find latest finished job (completed, failed, or cancelled) in current session
     const sessionId = process.env.COPILOT_REVIEW_SESSION_ID || undefined;
     const jobs = listJobs(workspaceRoot, { sessionId });
-    const completed = jobs.find((j) => j.status === "completed");
-    if (!completed) {
-      console.log("No completed review jobs found.");
+    const finished = jobs.find((j) => !isActiveJobStatus(j.status));
+    if (!finished) {
+      console.log("No finished review jobs found.");
       process.exitCode = 1;
       return;
     }
-    const job = readStoredJob(workspaceRoot, completed.id);
-    printJobResult(job ?? completed);
+    const job = readStoredJob(workspaceRoot, finished.id);
+    printJobResult(job ?? finished);
     return;
   }
 

@@ -29,12 +29,9 @@ export function createJobProgressUpdater(cwd, jobId) {
     if (phase === lastPhase) return;
     lastPhase = phase;
     try {
-      // Only update if job file still exists (guard against pruned jobs)
-      const stored = readStoredJob(cwd, jobId);
-      if (!stored) return;
-      // Update both state index and per-job file so status <id> shows live phase
-      stored.phase = phase;
-      writeJobFile(cwd, jobId, stored);
+      // Update index only — avoids read-modify-write on the per-job file
+      // which could clobber concurrent status/pid/result updates.
+      // The per-job file's phase is updated by runTrackedJob at key transitions.
       upsertJob(cwd, { id: jobId, phase });
     } catch {}
   };
