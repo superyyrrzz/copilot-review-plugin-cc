@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   writeJobFile,
-  readStoredJob,
   upsertJob,
   createJobLogFile,
   appendLogLine,
