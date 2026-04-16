@@ -63,7 +63,7 @@ If commit_id matches but body does NOT contain either phrase: Copilot reviewed b
 - Copilot's latest review on HEAD contains "generated no comments" or "generated no new comments"
 - PR merged/closed
 - User cancels via `CronDelete`
-- **Safety valve**: CronCreate auto-expires recurring jobs after 3 days. As an additional guard, stop after 20 cron iterations and surface a warning to the user if termination conditions were never met.
+- **Safety valve**: CronCreate auto-expires recurring jobs after 7 days. There is NO iteration-count limit — keep iterating as long as Copilot keeps finding issues. Do NOT stop due to "diminishing returns" or high iteration counts. The loop runs until Copilot is satisfied or the user cancels.
 
 ## Mandatory verification before declaring success
 

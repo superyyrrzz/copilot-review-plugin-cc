@@ -1045,23 +1045,26 @@ async function handleTaskWorker(argv) {
       // Replay the review with --job-id and --json so errors are captured in stdout
       const reviewArgv = [...(request.argv ?? []), "--job-id", jobId, "--json"];
 
-      // Capture the review output by temporarily redirecting stdout
+      // Capture the review output by temporarily redirecting stdout/stderr
       let reviewOutput = "";
       let reviewStderr = "";
-      const origStdoutWrite = process.stdout.write.bind(process.stdout);
-      const origStderrWrite = process.stderr.write.bind(process.stderr);
-      process.stdout.write = (chunk) => { reviewOutput += chunk; return true; };
-      const origStderr = process.stderr.write;
-      process.stderr.write = (chunk) => {
-        reviewStderr += chunk;
-        return origStderrWrite(chunk);
+      const origStdoutWrite = process.stdout.write;
+      const origStderrWrite = process.stderr.write;
+      process.stdout.write = function (chunk, encoding, cb) {
+        reviewOutput += String(chunk);
+        if (typeof cb === "function") cb();
+        return true;
+      };
+      process.stderr.write = function (chunk, encoding, cb) {
+        reviewStderr += String(chunk);
+        return origStderrWrite.call(process.stderr, chunk, encoding, cb);
       };
 
       try {
         await handleReview(reviewArgv);
       } finally {
         process.stdout.write = origStdoutWrite;
-        process.stderr.write = origStderr;
+        process.stderr.write = origStderrWrite;
       }
 
       // Parse the output — always JSON since we added --json

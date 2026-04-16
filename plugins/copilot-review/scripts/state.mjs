@@ -23,19 +23,28 @@ import { execSync } from "node:child_process";
 
 const MAX_JOBS = 20;
 
+// Cache resolved paths to avoid repeated git/fs calls within the same process
+const _workspaceRootCache = new Map();
+const _stateDirCache = new Map();
+
 function resolveWorkspaceRoot(cwd) {
+  if (_workspaceRootCache.has(cwd)) return _workspaceRootCache.get(cwd);
+  let root;
   try {
-    return execSync("git rev-parse --show-toplevel", {
+    root = execSync("git rev-parse --show-toplevel", {
       cwd,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
   } catch {
-    return cwd;
+    root = cwd;
   }
+  _workspaceRootCache.set(cwd, root);
+  return root;
 }
 
 function resolveStateDir(cwd) {
+  if (_stateDirCache.has(cwd)) return _stateDirCache.get(cwd);
   const root = resolveWorkspaceRoot(cwd);
   const basename = path.basename(root);
   const hash = createHash("sha256").update(fs.realpathSync(root)).digest("hex").slice(0, 16);
@@ -45,7 +54,9 @@ function resolveStateDir(cwd) {
     ? path.join(process.env.CLAUDE_PLUGIN_DATA, "state")
     : path.join(os.tmpdir(), "copilot-review-companion");
 
-  return path.join(stateRoot, slug);
+  const result = path.join(stateRoot, slug);
+  _stateDirCache.set(cwd, result);
+  return result;
 }
 
 function resolveJobsDir(cwd) {
