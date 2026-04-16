@@ -142,9 +142,13 @@ export function updateState(cwd, mutator) {
       try { fs.unlinkSync(resolveJobLogFile(cwd, job.id)); } catch {}
     }
     // Atomic write via temp file + rename
+    // On Windows, renameSync fails when the target exists; unlink first.
     const tmpFile = stateFile + `.tmp.${process.pid}.${Date.now()}`;
     try {
       fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2) + "\n", "utf8");
+      if (process.platform === "win32") {
+        try { fs.unlinkSync(stateFile); } catch {}
+      }
       fs.renameSync(tmpFile, stateFile);
       return state;
     } catch (err) {

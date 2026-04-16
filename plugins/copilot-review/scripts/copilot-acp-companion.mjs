@@ -827,7 +827,7 @@ function printJobTable(jobs) {
 }
 
 function formatDuration(ms) {
-  if (!ms || ms < 0) return "—";
+  if (ms == null || ms < 0) return "—";
   const s = Math.round(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -1072,7 +1072,7 @@ async function handleTaskWorker(argv) {
       let rendered = reviewOutput.trim();
       try {
         payload = JSON.parse(rendered);
-        rendered = payload.review ?? rendered;
+        rendered = payload.review || payload.error || null;
       } catch {
         payload = { review: rendered };
       }
