@@ -739,6 +739,10 @@ async function handleStatus(argv) {
         await new Promise((r) => setTimeout(r, 2000));
         current = readStoredJob(workspaceRoot, jobId) ?? current;
       }
+      if (isActiveJobStatus(current.status)) {
+        console.log(`Timed out waiting for job ${jobId} (still ${current.status} after ${formatDuration(waitTimeout)}).`);
+        process.exitCode = 1;
+      }
       printJobDetail(current);
     } else {
       printJobDetail(job);
@@ -1017,7 +1021,7 @@ async function handleTaskWorker(argv) {
       const current = readStoredJob(workspaceRoot, jobId);
       if (current && current.status === "cancelled") {
         appendLogLine(logFile, "Job was cancelled before review started.");
-        return { exitStatus: 1, payload: null, rendered: "Cancelled.", summary: "Cancelled" };
+        return { exitStatus: 0, payload: null, rendered: "Cancelled.", summary: "Cancelled" };
       }
 
       // Replay the review with --job-id and --json so errors are captured in stdout

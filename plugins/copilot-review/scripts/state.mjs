@@ -219,6 +219,7 @@ export function listJobs(cwd, { sessionId, all } = {}) {
   const state = readState(cwd);
   if (all) return state.jobs;
   if (sessionId) return state.jobs.filter((j) => j.sessionId === sessionId);
+  // No session ID and not --all: return all jobs (best-effort in absence of session tracking)
   return state.jobs;
 }
 
