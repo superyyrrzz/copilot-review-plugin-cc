@@ -64,6 +64,11 @@ export async function runTrackedJob(job, runner, { logFile } = {}) {
     const completionStatus = execution.exitStatus === 0 ? "completed" : "failed";
     const completedAt = nowIso();
 
+    // For failed jobs, extract a best-effort error message from the payload
+    const errorMessage = completionStatus === "failed"
+      ? (execution.payload?.error ?? execution.summary ?? `Exited with status ${execution.exitStatus}`)
+      : undefined;
+
     const finalRecord = {
       ...runningRecord,
       status: completionStatus,
@@ -73,6 +78,7 @@ export async function runTrackedJob(job, runner, { logFile } = {}) {
       result: execution.payload ?? null,
       rendered: execution.rendered ?? null,
       summary: execution.summary ?? null,
+      ...(errorMessage ? { errorMessage } : {}),
     };
 
     writeJobFile(cwd, job.id, finalRecord);
@@ -83,6 +89,7 @@ export async function runTrackedJob(job, runner, { logFile } = {}) {
       pid: null,
       completedAt,
       summary: execution.summary ?? null,
+      ...(errorMessage ? { errorMessage } : {}),
     });
 
     if (logFile && execution.rendered) {
@@ -138,22 +145,44 @@ export function enqueueBackgroundTask(cwd, job, request) {
   upsertJob(cwd, queuedRecord);
 
   // Spawn detached child running task-worker subcommand
-  const child = spawn(process.execPath, [
-    COMPANION_SCRIPT,
-    "task-worker",
-    "--cwd", cwd,
-    "--job-id", job.id,
-  ], {
-    cwd,
-    env: {
-      ...process.env,
-      ...(job.sessionId ? { COPILOT_REVIEW_SESSION_ID: job.sessionId } : {}),
-    },
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  child.unref();
+  let child;
+  try {
+    child = spawn(process.execPath, [
+      COMPANION_SCRIPT,
+      "task-worker",
+      "--cwd", cwd,
+      "--job-id", job.id,
+    ], {
+      cwd,
+      env: {
+        ...process.env,
+        ...(job.sessionId ? { COPILOT_REVIEW_SESSION_ID: job.sessionId } : {}),
+      },
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.unref();
+  } catch (spawnError) {
+    const errorMessage = spawnError?.message ?? String(spawnError);
+    const completedAt = nowIso();
+    writeJobFile(cwd, job.id, {
+      ...queuedRecord,
+      status: "failed",
+      phase: "failed",
+      completedAt,
+      errorMessage: `Failed to spawn worker: ${errorMessage}`,
+    });
+    upsertJob(cwd, {
+      id: job.id,
+      status: "failed",
+      phase: "failed",
+      completedAt,
+      errorMessage: `Failed to spawn worker: ${errorMessage}`,
+    });
+    appendLogLine(logFile, `Failed to spawn worker: ${errorMessage}`);
+    return { jobId: job.id, logFile, pid: null };
+  }
 
   // Update index and job file with actual PID now that child is spawned
   const pid = child.pid ?? null;

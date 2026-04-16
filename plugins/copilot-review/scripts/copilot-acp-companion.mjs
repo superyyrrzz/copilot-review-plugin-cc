@@ -523,7 +523,8 @@ async function handleReview(argv) {
   let progressUpdater = null;
   if (jobId) {
     const workspaceRoot = getRepoRoot(cwd);
-    const stored = readStoredJob(workspaceRoot, jobId);
+    const stored = safeReadJob(workspaceRoot, jobId);
+    if (stored === undefined) return; // invalid ID
     if (stored) {
       logFile = stored.logFile ?? null;
       progressUpdater = createJobProgressUpdater(workspaceRoot, jobId);
@@ -998,7 +999,14 @@ async function handleTaskWorker(argv) {
   }
 
   const workspaceRoot = getRepoRoot(cwd);
-  const storedJob = readStoredJob(workspaceRoot, jobId);
+  let storedJob;
+  try {
+    storedJob = readStoredJob(workspaceRoot, jobId);
+  } catch {
+    process.stderr.write(`task-worker: invalid job ID "${jobId}"\n`);
+    process.exitCode = 1;
+    return;
+  }
   if (!storedJob) {
     process.stderr.write(`task-worker: job ${jobId} not found\n`);
     process.exitCode = 1;
