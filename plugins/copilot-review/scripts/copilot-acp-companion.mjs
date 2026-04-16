@@ -19,6 +19,26 @@ import readline from "node:readline";
 import process from "node:process";
 import path from "node:path";
 import fs from "node:fs";
+import {
+  generateJobId,
+  readState,
+  readStoredJob,
+  upsertJob,
+  writeJobFile,
+  appendLogLine,
+  createJobLogFile,
+  nowIso,
+  listJobs,
+  findLatestJob,
+  isActiveJobStatus,
+  resolveWorkspaceRoot,
+} from "./state.mjs";
+import {
+  runTrackedJob,
+  createJobProgressUpdater,
+  enqueueBackgroundTask,
+  terminateProcessTree,
+} from "./tracked-jobs.mjs";
 
 // ---------------------------------------------------------------------------
 // Argument parsing (inlined from codex-plugin-cc/scripts/lib/args.mjs)
@@ -433,8 +453,8 @@ ${diffText}
 
 async function handleReview(argv) {
   const { options, positionals } = parseArgs(argv, {
-    valueOptions: ["cwd", "base", "timeout", "idle-timeout"],
-    booleanOptions: ["json", "stream", "debug"],
+    valueOptions: ["cwd", "base", "timeout", "idle-timeout", "job-id"],
+    booleanOptions: ["json", "stream", "debug", "background"],
     aliasMap: { C: "cwd" },
   });
 
@@ -472,6 +492,46 @@ async function handleReview(argv) {
     }
   }
   const focus = positionals.join(" ").trim() || null;
+  const background = Boolean(options.background);
+  const jobId = options["job-id"] ?? null;
+
+  // Background mode: enqueue and exit immediately
+  if (background) {
+    const workspaceRoot = getRepoRoot(cwd);
+    const id = generateJobId("review");
+    const sessionId = process.env.COPILOT_REVIEW_SESSION_ID || undefined;
+    const job = {
+      id,
+      kind: "review",
+      title: "Copilot Review",
+      workspaceRoot,
+      summary: `Review ${base ?? "working-tree"}`,
+      ...(sessionId ? { sessionId } : {}),
+    };
+    // Store the original argv so task-worker can replay
+    const request = { argv: argv.filter((a) => a !== "--background") };
+    const result = enqueueBackgroundTask(cwd, job, request);
+    // Output job info to stdout so caller can parse it
+    console.log(JSON.stringify({
+      jobId: id,
+      status: "queued",
+      logFile: result.logFile,
+      pid: result.pid,
+    }));
+    return;
+  }
+
+  // Resolve job tracking context (set when running as task-worker or with --job-id)
+  let logFile = null;
+  let progressUpdater = null;
+  if (jobId) {
+    const workspaceRoot = getRepoRoot(cwd);
+    const stored = readStoredJob(workspaceRoot, jobId);
+    if (stored) {
+      logFile = stored.logFile ?? null;
+      progressUpdater = createJobProgressUpdater(workspaceRoot, jobId);
+    }
+  }
 
   // Collect diff
   let diff;
@@ -567,6 +627,7 @@ async function handleReview(argv) {
     const startTime = Date.now();
     const elapsed = () => `${((Date.now() - startTime) / 1000).toFixed(0)}s`;
     process.stderr.write(`[copilot] Connected. Reviewing...\n`);
+    if (logFile) appendLogLine(logFile, "Connected. Reviewing...");
     await client.newSession();
 
     let phase = "thinking";
@@ -591,16 +652,21 @@ async function handleReview(argv) {
               phase = "thinking";
             }
             process.stderr.write(`[${elapsed()}] ${latest}.\n`);
+            if (logFile) appendLogLine(logFile, latest);
+            if (progressUpdater) progressUpdater("thinking");
           }
           thoughtBuffer = sentences[sentences.length - 1]; // keep incomplete sentence
         }
       } else if (kind === "tool_start") {
         phase = "investigating";
         process.stderr.write(`[${elapsed()}] ${data}\n`);
+        if (logFile) appendLogLine(logFile, data);
+        if (progressUpdater) progressUpdater("investigating");
       } else if (kind === "tool_done") {
         // Silently complete — the start message was enough
       } else if (kind === "tool_fail") {
         process.stderr.write(`[${elapsed()}] Failed: ${data}\n`);
+        if (logFile) appendLogLine(logFile, `Failed: ${data}`);
       }
     };
 
@@ -609,6 +675,7 @@ async function handleReview(argv) {
     clearTimeout(idleTimer);
 
     process.stderr.write(`[${elapsed()}] Review complete.\n`);
+    if (logFile) appendLogLine(logFile, "Review complete.");
 
     if (timedOut) return;
 
@@ -638,6 +705,322 @@ async function handleReview(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// Status handler
+// ---------------------------------------------------------------------------
+
+async function handleStatus(argv) {
+  const { options, positionals } = parseArgs(argv, {
+    valueOptions: ["cwd", "timeout-ms"],
+    booleanOptions: ["wait", "all"],
+    aliasMap: { C: "cwd" },
+  });
+
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const workspaceRoot = getRepoRoot(cwd);
+  const jobId = positionals[0] ?? null;
+  const waitMode = Boolean(options.wait);
+  const showAll = Boolean(options.all);
+  const waitTimeout = Number(options["timeout-ms"]) || 240000;
+
+  if (jobId) {
+    // Single job view
+    const job = readStoredJob(workspaceRoot, jobId);
+    if (!job) {
+      console.log(`Job not found: ${jobId}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    if (waitMode && isActiveJobStatus(job.status)) {
+      // Poll until done
+      const deadline = Date.now() + waitTimeout;
+      let current = job;
+      while (isActiveJobStatus(current.status) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        current = readStoredJob(workspaceRoot, jobId) ?? current;
+      }
+      printJobDetail(current);
+    } else {
+      printJobDetail(job);
+    }
+  } else {
+    // List all jobs
+    const sessionId = process.env.COPILOT_REVIEW_SESSION_ID || undefined;
+    const jobs = listJobs(workspaceRoot, { sessionId: showAll ? undefined : sessionId, all: showAll });
+    if (jobs.length === 0) {
+      console.log("No review jobs found.");
+      return;
+    }
+    printJobTable(jobs);
+  }
+}
+
+function printJobDetail(job) {
+  const lines = [
+    `Job: ${job.id}`,
+    `Status: ${job.status}`,
+    `Phase: ${job.phase ?? "—"}`,
+    `Summary: ${job.summary ?? "—"}`,
+  ];
+  if (job.startedAt) lines.push(`Started: ${job.startedAt}`);
+  if (job.completedAt) lines.push(`Completed: ${job.completedAt}`);
+  if (job.errorMessage) lines.push(`Error: ${job.errorMessage}`);
+  if (job.logFile) lines.push(`Log: ${job.logFile}`);
+
+  // Show log tail if available
+  if (job.logFile) {
+    try {
+      const log = fs.readFileSync(job.logFile, "utf8").trim();
+      if (log) {
+        const logLines = log.split("\n");
+        const tail = logLines.slice(-15).join("\n");
+        lines.push("", "--- Recent progress ---", tail);
+      }
+    } catch {}
+  }
+
+  console.log(lines.join("\n"));
+}
+
+function printJobTable(jobs) {
+  const rows = jobs.map((j) => {
+    const elapsed = j.startedAt
+      ? j.completedAt
+        ? formatDuration(new Date(j.completedAt) - new Date(j.startedAt))
+        : formatDuration(Date.now() - new Date(j.startedAt))
+      : "—";
+    return {
+      id: j.id,
+      status: j.status,
+      phase: j.phase ?? "—",
+      elapsed,
+      summary: j.summary ?? "—",
+    };
+  });
+
+  // Simple table output
+  console.log("| ID | Status | Phase | Elapsed | Summary |");
+  console.log("|----|--------|-------|---------|---------|");
+  for (const r of rows) {
+    console.log(`| ${r.id} | ${r.status} | ${r.phase} | ${r.elapsed} | ${r.summary} |`);
+  }
+
+  const active = jobs.filter((j) => isActiveJobStatus(j.status));
+  if (active.length > 0) {
+    console.log(`\nActive jobs: ${active.map((j) => j.id).join(", ")}`);
+    console.log(`Check status: node copilot-acp-companion.mjs status <job-id>`);
+    console.log(`Wait for completion: node copilot-acp-companion.mjs status <job-id> --wait`);
+  }
+}
+
+function formatDuration(ms) {
+  if (!ms || ms < 0) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m${s % 60}s`;
+}
+
+// ---------------------------------------------------------------------------
+// Result handler
+// ---------------------------------------------------------------------------
+
+async function handleResult(argv) {
+  const { options, positionals } = parseArgs(argv, {
+    valueOptions: ["cwd"],
+    booleanOptions: [],
+    aliasMap: { C: "cwd" },
+  });
+
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const workspaceRoot = getRepoRoot(cwd);
+  const jobId = positionals[0] ?? null;
+
+  if (!jobId) {
+    // Find latest completed job
+    const latest = findLatestJob(workspaceRoot);
+    if (!latest) {
+      console.log("No review jobs found.");
+      process.exitCode = 1;
+      return;
+    }
+    const job = readStoredJob(workspaceRoot, latest.id);
+    printJobResult(job ?? latest);
+    return;
+  }
+
+  const job = readStoredJob(workspaceRoot, jobId);
+  if (!job) {
+    console.log(`Job not found: ${jobId}`);
+    process.exitCode = 1;
+    return;
+  }
+  printJobResult(job);
+}
+
+function printJobResult(job) {
+  console.log(`Job: ${job.id}`);
+  console.log(`Status: ${job.status}`);
+  if (job.errorMessage) {
+    console.log(`Error: ${job.errorMessage}`);
+  }
+  if (job.rendered) {
+    console.log("");
+    console.log(job.rendered);
+  } else if (job.result) {
+    console.log("");
+    console.log(typeof job.result === "string" ? job.result : JSON.stringify(job.result, null, 2));
+  } else if (isActiveJobStatus(job.status)) {
+    console.log("\nJob is still running. Use `status <job-id> --wait` to wait for completion.");
+  } else {
+    console.log("\nNo result available.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cancel handler
+// ---------------------------------------------------------------------------
+
+async function handleCancel(argv) {
+  const { options, positionals } = parseArgs(argv, {
+    valueOptions: ["cwd"],
+    booleanOptions: [],
+    aliasMap: { C: "cwd" },
+  });
+
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const workspaceRoot = getRepoRoot(cwd);
+  const jobId = positionals[0] ?? null;
+
+  if (!jobId) {
+    // Cancel latest active job
+    const active = findLatestJob(workspaceRoot, { activeOnly: true });
+    if (!active) {
+      console.log("No active review jobs to cancel.");
+      return;
+    }
+    await cancelJob(workspaceRoot, active.id);
+    return;
+  }
+
+  await cancelJob(workspaceRoot, jobId);
+}
+
+async function cancelJob(workspaceRoot, jobId) {
+  const job = readStoredJob(workspaceRoot, jobId);
+  if (!job) {
+    console.log(`Job not found: ${jobId}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!isActiveJobStatus(job.status)) {
+    console.log(`Job ${jobId} is already ${job.status}.`);
+    return;
+  }
+
+  // Kill the process
+  const killed = terminateProcessTree(job.pid);
+
+  // Write cancelled state
+  const completedAt = nowIso();
+  writeJobFile(workspaceRoot, jobId, {
+    ...job,
+    status: "cancelled",
+    phase: "cancelled",
+    pid: null,
+    completedAt,
+  });
+  upsertJob(workspaceRoot, {
+    id: jobId,
+    status: "cancelled",
+    phase: "cancelled",
+    pid: null,
+    completedAt,
+  });
+
+  if (job.logFile) {
+    appendLogLine(job.logFile, "Cancelled by user.");
+  }
+
+  console.log(`Cancelled job ${jobId}${killed ? " (process terminated)" : ""}.`);
+}
+
+// ---------------------------------------------------------------------------
+// Task worker — runs in a detached child to execute a background review
+// ---------------------------------------------------------------------------
+
+async function handleTaskWorker(argv) {
+  const { options } = parseArgs(argv, {
+    valueOptions: ["cwd", "job-id"],
+    booleanOptions: [],
+  });
+
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const jobId = options["job-id"];
+  if (!jobId) {
+    process.stderr.write("task-worker: --job-id is required\n");
+    process.exitCode = 1;
+    return;
+  }
+
+  const workspaceRoot = getRepoRoot(cwd);
+  const storedJob = readStoredJob(workspaceRoot, jobId);
+  if (!storedJob) {
+    process.stderr.write(`task-worker: job ${jobId} not found\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const request = storedJob.request;
+  if (!request) {
+    process.stderr.write(`task-worker: job ${jobId} has no stored request\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const logFile = storedJob.logFile ?? createJobLogFile(workspaceRoot, jobId, "Copilot Review");
+  appendLogLine(logFile, "Task worker started.");
+
+  await runTrackedJob(
+    { ...storedJob, workspaceRoot, logFile },
+    async () => {
+      // Replay the review with --job-id so it writes to our log file
+      const reviewArgv = [...(request.argv ?? []), "--job-id", jobId];
+
+      // Capture the review output by temporarily redirecting stdout
+      let reviewOutput = "";
+      const origWrite = process.stdout.write.bind(process.stdout);
+      process.stdout.write = (chunk) => { reviewOutput += chunk; return true; };
+
+      try {
+        await handleReview(reviewArgv);
+      } finally {
+        process.stdout.write = origWrite;
+      }
+
+      // Parse the output
+      let payload = null;
+      let rendered = reviewOutput.trim();
+      try {
+        payload = JSON.parse(rendered);
+        rendered = payload.review ?? rendered;
+      } catch {
+        payload = { review: rendered };
+      }
+
+      return {
+        exitStatus: process.exitCode ?? 0,
+        payload,
+        rendered,
+        summary: `Review ${storedJob.summary ?? "complete"}`,
+      };
+    },
+    { logFile }
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -648,18 +1031,36 @@ async function main() {
     case "review":
       await handleReview(argv);
       break;
+    case "status":
+      await handleStatus(argv);
+      break;
+    case "result":
+      await handleResult(argv);
+      break;
+    case "cancel":
+      await handleCancel(argv);
+      break;
+    case "task-worker":
+      await handleTaskWorker(argv);
+      break;
     default: {
       const usage =
-        `Usage: copilot-acp-companion.mjs review [options]\n` +
-        `\nSubcommands:\n  review   Run a Copilot code review via ACP\n` +
+        `Usage: copilot-acp-companion.mjs <subcommand> [options]\n` +
+        `\nSubcommands:\n` +
+        `  review        Run a Copilot code review via ACP\n` +
+        `  status        Show active and recent review jobs\n` +
+        `  result        Show the full review output for a finished job\n` +
+        `  cancel        Cancel a running review job\n` +
+        `  task-worker   (internal) Run a background review task\n` +
         `\nOptions:\n` +
-        `  --cwd <path>     Working directory (default: cwd)\n` +
-        `  --base <ref>     Git base ref for diff (default: working tree)\n` +
-        `  --json           Output structured JSON\n` +
-        `  --stream         Stream Copilot response text to stderr\n` +
-        `  --debug          Dump raw ACP protocol messages to stderr\n` +
-        `  --timeout <ms>   Max wall-clock timeout in ms (default: 1800000 = 30 min)\n` +
-        `  --idle-timeout <ms> Idle timeout — cancel if no activity for this long (default: 120000 = 2 min)\n`;
+        `  --cwd <path>         Working directory (default: cwd)\n` +
+        `  --base <ref>         Git base ref for diff (default: working tree)\n` +
+        `  --json               Output structured JSON\n` +
+        `  --stream             Stream Copilot response text to stderr\n` +
+        `  --debug              Dump raw ACP protocol messages to stderr\n` +
+        `  --background         Run review in background (returns job ID immediately)\n` +
+        `  --timeout <ms>       Max wall-clock timeout in ms (default: 1800000 = 30 min)\n` +
+        `  --idle-timeout <ms>  Idle timeout — cancel if no activity for this long (default: 120000 = 2 min)\n`;
       if (subcommand) {
         process.stderr.write(usage);
         process.exitCode = 1;
