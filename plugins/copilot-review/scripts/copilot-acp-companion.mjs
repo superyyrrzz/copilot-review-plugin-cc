@@ -1058,7 +1058,9 @@ async function handleTaskWorker(argv) {
       const origStderrWrite = process.stderr.write;
       process.stdout.write = function (chunk, encoding, cb) {
         reviewOutput += String(chunk);
-        if (typeof cb === "function") cb();
+        // Handle write(chunk, cb) signature where encoding is the callback
+        const callback = typeof cb === "function" ? cb : typeof encoding === "function" ? encoding : null;
+        if (callback) callback();
         return true;
       };
       process.stderr.write = function (chunk, encoding, cb) {
