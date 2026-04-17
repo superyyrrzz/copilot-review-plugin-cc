@@ -61,9 +61,10 @@ If commit_id matches but body does NOT contain either phrase: Copilot reviewed b
 ## Stop conditions
 
 - Copilot's latest review on HEAD contains "generated no comments" or "generated no new comments"
+- **Repeat-dismissal convergence**: If ALL findings in Copilot's latest review have been dismissed ≥3 times each (same file, same core issue across iterations), treat this as equivalent to "generated no comments" and terminate. Copilot sometimes keeps re-raising the same dismissed finding indefinitely, preventing the natural termination signal.
 - PR merged/closed
 - User cancels via `CronDelete`
-- **Safety valve**: CronCreate auto-expires recurring jobs after 3 days. As an additional guard, stop after 20 cron iterations and surface a warning to the user if termination conditions were never met.
+- **Safety valve**: CronCreate auto-expires recurring jobs after 7 days. There is NO iteration-count limit — keep iterating as long as Copilot keeps finding *new* issues. Do NOT stop due to "diminishing returns" or high iteration counts.
 
 ## Mandatory verification before declaring success
 
