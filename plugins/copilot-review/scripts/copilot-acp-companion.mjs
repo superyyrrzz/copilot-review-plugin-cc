@@ -494,7 +494,16 @@ async function handleReview(argv) {
 
   // Background mode: enqueue and exit immediately
   if (background) {
-    const workspaceRoot = getRepoRoot(cwd);
+    let workspaceRoot;
+    try {
+      workspaceRoot = getRepoRoot(cwd);
+    } catch (err) {
+      const msg = `Failed to detect git repo: ${err.message}`;
+      process.stderr.write(msg + "\n");
+      console.log(JSON.stringify({ jobId: null, status: "failed", error: msg }));
+      process.exitCode = 1;
+      return;
+    }
     const id = generateJobId("review");
     const sessionId = process.env.COPILOT_REVIEW_SESSION_ID || undefined;
     const job = {
