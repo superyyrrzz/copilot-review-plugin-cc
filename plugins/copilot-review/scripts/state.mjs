@@ -6,7 +6,7 @@
  *   os.tmpdir()/copilot-review-companion/<repo>-<hash16>/   (fallback)
  *
  * Layout inside the workspace state dir:
- *   state.json           – lightweight index of all jobs (max 20)
+ *   state.json           – lightweight index of all jobs (max 20 finished; active jobs always kept)
  *   jobs/<jobId>.json     – full job record (request + result)
  *   jobs/<jobId>.log      – append-only progress log
  */
