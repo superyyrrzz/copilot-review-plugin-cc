@@ -515,7 +515,7 @@ async function handleReview(argv) {
       ...(sessionId ? { sessionId } : {}),
     };
     // Store the original argv, stripping all --background variants to prevent re-enqueue
-    const request = { argv: argv.filter((a) => !a.startsWith("--background")) };
+    const request = { argv: argv.filter((a) => a !== "--background") };
     const result = enqueueBackgroundTask(cwd, job, request);
     // Output job info to stdout so caller can parse it
     const spawnFailed = result.pid == null;
