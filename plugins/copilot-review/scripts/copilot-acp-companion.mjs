@@ -19,6 +19,7 @@ import readline from "node:readline";
 import process from "node:process";
 import path from "node:path";
 import fs from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import {
   generateJobId,
   readStoredJob,
@@ -734,17 +735,22 @@ function safeReadJob(workspaceRoot, jobId) {
 async function handleStatus(argv) {
   const { options, positionals } = parseArgs(argv, {
     valueOptions: ["cwd", "timeout-ms"],
-    booleanOptions: ["wait", "all"],
-    aliasMap: { C: "cwd" },
+    booleanOptions: ["wait", "all", "follow"],
+    aliasMap: { C: "cwd", f: "follow" },
   });
 
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const workspaceRoot = getRepoRoot(cwd);
   const jobId = positionals[0] ?? null;
   const waitMode = Boolean(options.wait);
+  const followMode = Boolean(options.follow);
   const showAll = Boolean(options.all);
   const rawTimeout = options["timeout-ms"] != null ? Number(options["timeout-ms"]) : NaN;
-  const waitTimeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 240000;
+  // --follow is meant to watch a review through to completion. Reviews can take
+  // 5-30 min, so default to the review wall-clock budget (30 min) instead of the
+  // 4 min default used by --wait, which would cause false timeouts.
+  const defaultTimeout = followMode ? 1800000 : 240000;
+  const waitTimeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : defaultTimeout;
 
   if (jobId) {
     // Single job view
@@ -753,6 +759,16 @@ async function handleStatus(argv) {
     if (!job) {
       console.log(`Job not found: ${jobId}`);
       process.exitCode = 1;
+      return;
+    }
+
+    if (followMode) {
+      const final = await followJobLog(workspaceRoot, job, waitTimeout);
+      if (isActiveJobStatus(final.status)) {
+        console.log(`\nTimed out following job ${jobId} (still ${final.status} after ${formatDuration(waitTimeout)}).`);
+        process.exitCode = 1;
+      }
+      printJobDetail(final, { includeLogTail: false });
       return;
     }
 
@@ -784,7 +800,7 @@ async function handleStatus(argv) {
   }
 }
 
-function printJobDetail(job) {
+function printJobDetail(job, { includeLogTail = true } = {}) {
   const lines = [
     `Job: ${job.id}`,
     `Status: ${job.status}`,
@@ -796,8 +812,8 @@ function printJobDetail(job) {
   if (job.errorMessage) lines.push(`Error: ${job.errorMessage}`);
   if (job.logFile) lines.push(`Log: ${job.logFile}`);
 
-  // Show log tail if available
-  if (job.logFile) {
+  // Show log tail if available (skipped after --follow, which already streamed it)
+  if (includeLogTail && job.logFile) {
     try {
       const log = fs.readFileSync(job.logFile, "utf8").trim();
       if (log) {
@@ -809,6 +825,72 @@ function printJobDetail(job) {
   }
 
   console.log(lines.join("\n"));
+}
+
+async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let job = initialJob;
+  const logFile = job.logFile;
+
+  console.log(`Following job ${job.id} (status: ${job.status}). Press Ctrl+C to detach.`);
+
+  let offset = 0;
+  const decoder = new StringDecoder("utf8");
+  let lastErrCode = null;
+  const drainLog = () => {
+    if (!logFile) return;
+    try {
+      const stat = fs.statSync(logFile);
+      if (stat.size <= offset) return;
+      const fd = fs.openSync(logFile, "r");
+      try {
+        const CHUNK = 64 * 1024;
+        const buf = Buffer.alloc(CHUNK);
+        while (offset < stat.size) {
+          const want = Math.min(CHUNK, stat.size - offset);
+          const got = fs.readSync(fd, buf, 0, want, offset);
+          if (got <= 0) break;
+          process.stdout.write(decoder.write(buf.slice(0, got)));
+          offset += got;
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+      lastErrCode = null;
+    } catch (err) {
+      // Avoid spamming the same transient error every poll, but surface a
+      // distinct error once so silent failures are diagnosable.
+      const code = err?.code ?? err?.message ?? "unknown";
+      if (code !== lastErrCode) {
+        process.stderr.write(`[follow] log read failed: ${code}\n`);
+        lastErrCode = code;
+      }
+    }
+  };
+
+  drainLog();
+
+  while (Date.now() < deadline) {
+    const fresh = readStoredJob(workspaceRoot, job.id) ?? job;
+    job = fresh;
+    drainLog();
+
+    if (!isActiveJobStatus(job.status)) {
+      // The worker writes the "Final output" block AFTER flipping status to
+      // completed (see tracked-jobs.mjs). Wait briefly and drain once more so
+      // --follow doesn't return before the trailing chunk is on disk.
+      await new Promise((r) => setTimeout(r, 500));
+      drainLog();
+      const tail = decoder.end();
+      if (tail) process.stdout.write(tail);
+      return job;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+
+  const tail = decoder.end();
+  if (tail) process.stdout.write(tail);
+  return job;
 }
 
 function printJobTable(jobs) {
@@ -896,7 +978,7 @@ function printJobResult(job) {
     console.log("");
     console.log(typeof job.result === "string" ? job.result : JSON.stringify(job.result, null, 2));
   } else if (isActiveJobStatus(job.status)) {
-    console.log("\nJob is still running. Use `status <job-id> --wait` to wait for completion.");
+    console.log("\nJob is still running. Use `status <job-id> --follow` to stream progress, or `--wait` to block silently.");
   } else {
     console.log("\nNo result available.");
   }
@@ -1151,7 +1233,13 @@ async function main() {
         `  --debug              Dump raw ACP protocol messages to stderr\n` +
         `  --background         Run review in background (returns job ID immediately)\n` +
         `  --timeout <ms>       Max wall-clock timeout in ms (default: 1800000 = 30 min)\n` +
-        `  --idle-timeout <ms>  Idle timeout — cancel if no activity for this long (default: 120000 = 2 min)\n`;
+        `  --idle-timeout <ms>  Idle timeout — cancel if no activity for this long (default: 120000 = 2 min)\n` +
+        `\nstatus subcommand:\n` +
+        `  status [<job-id>]              List jobs, or show one job's detail + recent log tail\n` +
+        `  status <job-id> --follow,-f    Stream the job log live, exit when done (default timeout: 30 min)\n` +
+        `  status <job-id> --wait         Block silently until done, then print snapshot (default timeout: 4 min)\n` +
+        `  status <job-id> --timeout-ms   Override --follow/--wait timeout in ms\n` +
+        `  status --all                   Include jobs from other sessions\n`;
       if (subcommand) {
         process.stderr.write(usage);
         process.exitCode = 1;
