@@ -745,7 +745,11 @@ async function handleStatus(argv) {
   const followMode = Boolean(options.follow);
   const showAll = Boolean(options.all);
   const rawTimeout = options["timeout-ms"] != null ? Number(options["timeout-ms"]) : NaN;
-  const waitTimeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 240000;
+  // --follow is meant to watch a review through to completion. Reviews can take
+  // 5-30 min, so default to the review wall-clock budget (30 min) instead of the
+  // 4 min default used by --wait, which would cause false timeouts.
+  const defaultTimeout = followMode ? 1800000 : 240000;
+  const waitTimeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : defaultTimeout;
 
   if (jobId) {
     // Single job view
@@ -1223,7 +1227,13 @@ async function main() {
         `  --debug              Dump raw ACP protocol messages to stderr\n` +
         `  --background         Run review in background (returns job ID immediately)\n` +
         `  --timeout <ms>       Max wall-clock timeout in ms (default: 1800000 = 30 min)\n` +
-        `  --idle-timeout <ms>  Idle timeout — cancel if no activity for this long (default: 120000 = 2 min)\n`;
+        `  --idle-timeout <ms>  Idle timeout — cancel if no activity for this long (default: 120000 = 2 min)\n` +
+        `\nstatus subcommand:\n` +
+        `  status [<job-id>]              List jobs, or show one job's detail + recent log tail\n` +
+        `  status <job-id> --follow,-f    Stream the job log live, exit when done (default timeout: 30 min)\n` +
+        `  status <job-id> --wait         Block silently until done, then print snapshot (default timeout: 4 min)\n` +
+        `  status <job-id> --timeout-ms   Override --follow/--wait timeout in ms\n` +
+        `  status --all                   Include jobs from other sessions\n`;
       if (subcommand) {
         process.stderr.write(usage);
         process.exitCode = 1;
