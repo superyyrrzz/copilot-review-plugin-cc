@@ -768,7 +768,7 @@ async function handleStatus(argv) {
         console.log(`\nTimed out following job ${jobId} (still ${final.status} after ${formatDuration(waitTimeout)}).`);
         process.exitCode = 1;
       }
-      printJobDetail(final);
+      printJobDetail(final, { includeLogTail: false });
       return;
     }
 
@@ -800,7 +800,7 @@ async function handleStatus(argv) {
   }
 }
 
-function printJobDetail(job) {
+function printJobDetail(job, { includeLogTail = true } = {}) {
   const lines = [
     `Job: ${job.id}`,
     `Status: ${job.status}`,
@@ -812,8 +812,8 @@ function printJobDetail(job) {
   if (job.errorMessage) lines.push(`Error: ${job.errorMessage}`);
   if (job.logFile) lines.push(`Log: ${job.logFile}`);
 
-  // Show log tail if available
-  if (job.logFile) {
+  // Show log tail if available (skipped after --follow, which already streamed it)
+  if (includeLogTail && job.logFile) {
     try {
       const log = fs.readFileSync(job.logFile, "utf8").trim();
       if (log) {
@@ -836,6 +836,7 @@ async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
 
   let offset = 0;
   const decoder = new StringDecoder("utf8");
+  let lastErrCode = null;
   const drainLog = () => {
     if (!logFile) return;
     try {
@@ -855,7 +856,16 @@ async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
       } finally {
         fs.closeSync(fd);
       }
-    } catch {}
+      lastErrCode = null;
+    } catch (err) {
+      // Avoid spamming the same transient error every poll, but surface a
+      // distinct error once so silent failures are diagnosable.
+      const code = err?.code ?? err?.message ?? "unknown";
+      if (code !== lastErrCode) {
+        process.stderr.write(`[follow] log read failed: ${code}\n`);
+        lastErrCode = code;
+      }
+    }
   };
 
   drainLog();
