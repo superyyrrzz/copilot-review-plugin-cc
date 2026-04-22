@@ -832,9 +832,21 @@ async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
   let offset = 0;
   if (logFile) {
     try {
-      const initial = fs.readFileSync(logFile, "utf8");
-      process.stdout.write(initial);
-      offset = Buffer.byteLength(initial, "utf8");
+      const stat = fs.statSync(logFile);
+      const fd = fs.openSync(logFile, "r");
+      try {
+        const CHUNK = 64 * 1024;
+        const buf = Buffer.alloc(CHUNK);
+        while (offset < stat.size) {
+          const want = Math.min(CHUNK, stat.size - offset);
+          const got = fs.readSync(fd, buf, 0, want, offset);
+          if (got <= 0) break;
+          process.stdout.write(buf.slice(0, got).toString("utf8"));
+          offset += got;
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
     } catch {}
   }
 
@@ -848,11 +860,15 @@ async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
         if (stat.size > offset) {
           const fd = fs.openSync(logFile, "r");
           try {
-            const len = stat.size - offset;
-            const buf = Buffer.alloc(len);
-            fs.readSync(fd, buf, 0, len, offset);
-            process.stdout.write(buf.toString("utf8"));
-            offset = stat.size;
+            const CHUNK = 64 * 1024;
+            const buf = Buffer.alloc(CHUNK);
+            while (offset < stat.size) {
+              const want = Math.min(CHUNK, stat.size - offset);
+              const got = fs.readSync(fd, buf, 0, want, offset);
+              if (got <= 0) break;
+              process.stdout.write(buf.slice(0, got).toString("utf8"));
+              offset += got;
+            }
           } finally {
             fs.closeSync(fd);
           }
