@@ -24,10 +24,13 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" review --backgrou
 After launching, **poll for progress and wait for completion**:
 
 ```bash
-# Check progress (shows log tail with live updates)
+# Check progress (one-shot snapshot of log tail)
 node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" status <job-id>
 
-# Wait for the review to finish (blocks until done, up to 4 min)
+# Stream progress live and exit when done (preferred — surfaces activity in the CC session)
+node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" status <job-id> --follow
+
+# Block until done without streaming (returns one snapshot at the end)
 node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" status <job-id> --wait
 
 # Retrieve the full review output
@@ -62,7 +65,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" review --base mai
 
 1. **Detect scope**: Determine `--base` ref. For PRs use the PR base branch. For local work use `main` or `origin/main`. Note: `--base` performs a commit-to-commit diff (`base...HEAD`), so staged/unstaged working-tree changes are NOT included — commit first, or omit `--base` to diff against HEAD including working-tree changes.
 2. **Launch background review**: Run `review --background --base <ref>`. Parse the JSON output to get the `jobId`.
-3. **Wait for completion**: Run `status <jobId> --wait` to block until the review finishes. You can also run `status <jobId>` periodically to show progress to the user.
+3. **Stream progress to completion**: Run `status <jobId> --follow` to tail the log live until the job finishes. The user sees Copilot's activity (files read, tools run) in real time, which is the main reason to use background mode.
 4. **Retrieve results**: Run `result <jobId>` to get the full review output.
 5. **Process ALL findings from this iteration**:
    - Read the referenced code at the cited line numbers to verify each finding
@@ -71,7 +74,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/copilot-acp-companion.mjs" review --base mai
    - Track counts of fixed vs dismissed, and maintain a list of dismissed findings (file, line range, issue summary) for loop detection
 6. **If code was changed**: build and test. If build/test fails, stop and surface the error.
 7. **If code was changed**: commit the fixes (do NOT push unless user asked)
-8. **Re-run the companion script** — launch a NEW background review (`review --background --base <ref>`), wait with `status <jobId> --wait`, retrieve with `result <jobId>`
+8. **Re-run the companion script** — launch a NEW background review (`review --background --base <ref>`), stream with `status <jobId> --follow`, retrieve with `result <jobId>`
 9. **Repeat from step 5** until a stop condition is met
 
 ### Stop conditions

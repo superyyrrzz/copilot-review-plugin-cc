@@ -734,14 +734,15 @@ function safeReadJob(workspaceRoot, jobId) {
 async function handleStatus(argv) {
   const { options, positionals } = parseArgs(argv, {
     valueOptions: ["cwd", "timeout-ms"],
-    booleanOptions: ["wait", "all"],
-    aliasMap: { C: "cwd" },
+    booleanOptions: ["wait", "all", "follow"],
+    aliasMap: { C: "cwd", f: "follow" },
   });
 
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const workspaceRoot = getRepoRoot(cwd);
   const jobId = positionals[0] ?? null;
   const waitMode = Boolean(options.wait);
+  const followMode = Boolean(options.follow);
   const showAll = Boolean(options.all);
   const rawTimeout = options["timeout-ms"] != null ? Number(options["timeout-ms"]) : NaN;
   const waitTimeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 240000;
@@ -753,6 +754,16 @@ async function handleStatus(argv) {
     if (!job) {
       console.log(`Job not found: ${jobId}`);
       process.exitCode = 1;
+      return;
+    }
+
+    if (followMode) {
+      const final = await followJobLog(workspaceRoot, job, waitTimeout);
+      if (isActiveJobStatus(final.status)) {
+        console.log(`\nTimed out following job ${jobId} (still ${final.status} after ${formatDuration(waitTimeout)}).`);
+        process.exitCode = 1;
+      }
+      printJobDetail(final);
       return;
     }
 
@@ -809,6 +820,51 @@ function printJobDetail(job) {
   }
 
   console.log(lines.join("\n"));
+}
+
+async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let job = initialJob;
+  const logFile = job.logFile;
+
+  console.log(`Following job ${job.id} (status: ${job.status}). Press Ctrl+C to detach.`);
+
+  let offset = 0;
+  if (logFile) {
+    try {
+      const initial = fs.readFileSync(logFile, "utf8");
+      process.stdout.write(initial);
+      offset = Buffer.byteLength(initial, "utf8");
+    } catch {}
+  }
+
+  while (Date.now() < deadline) {
+    const fresh = readStoredJob(workspaceRoot, job.id) ?? job;
+    job = fresh;
+
+    if (logFile) {
+      try {
+        const stat = fs.statSync(logFile);
+        if (stat.size > offset) {
+          const fd = fs.openSync(logFile, "r");
+          try {
+            const len = stat.size - offset;
+            const buf = Buffer.alloc(len);
+            fs.readSync(fd, buf, 0, len, offset);
+            process.stdout.write(buf.toString("utf8"));
+            offset = stat.size;
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+      } catch {}
+    }
+
+    if (!isActiveJobStatus(job.status)) return job;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+
+  return job;
 }
 
 function printJobTable(jobs) {
@@ -896,7 +952,7 @@ function printJobResult(job) {
     console.log("");
     console.log(typeof job.result === "string" ? job.result : JSON.stringify(job.result, null, 2));
   } else if (isActiveJobStatus(job.status)) {
-    console.log("\nJob is still running. Use `status <job-id> --wait` to wait for completion.");
+    console.log("\nJob is still running. Use `status <job-id> --follow` to stream progress, or `--wait` to block silently.");
   } else {
     console.log("\nNo result available.");
   }
