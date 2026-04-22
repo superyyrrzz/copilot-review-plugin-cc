@@ -19,6 +19,7 @@ import readline from "node:readline";
 import process from "node:process";
 import path from "node:path";
 import fs from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import {
   generateJobId,
   readStoredJob,
@@ -834,6 +835,7 @@ async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
   console.log(`Following job ${job.id} (status: ${job.status}). Press Ctrl+C to detach.`);
 
   let offset = 0;
+  const decoder = new StringDecoder("utf8");
   const drainLog = () => {
     if (!logFile) return;
     try {
@@ -847,7 +849,7 @@ async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
           const want = Math.min(CHUNK, stat.size - offset);
           const got = fs.readSync(fd, buf, 0, want, offset);
           if (got <= 0) break;
-          process.stdout.write(buf.slice(0, got).toString("utf8"));
+          process.stdout.write(decoder.write(buf.slice(0, got)));
           offset += got;
         }
       } finally {
@@ -869,11 +871,15 @@ async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
       // --follow doesn't return before the trailing chunk is on disk.
       await new Promise((r) => setTimeout(r, 500));
       drainLog();
+      const tail = decoder.end();
+      if (tail) process.stdout.write(tail);
       return job;
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
 
+  const tail = decoder.end();
+  if (tail) process.stdout.write(tail);
   return job;
 }
 
