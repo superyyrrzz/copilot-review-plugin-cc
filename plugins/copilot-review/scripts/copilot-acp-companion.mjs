@@ -834,9 +834,11 @@ async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
   console.log(`Following job ${job.id} (status: ${job.status}). Press Ctrl+C to detach.`);
 
   let offset = 0;
-  if (logFile) {
+  const drainLog = () => {
+    if (!logFile) return;
     try {
       const stat = fs.statSync(logFile);
+      if (stat.size <= offset) return;
       const fd = fs.openSync(logFile, "r");
       try {
         const CHUNK = 64 * 1024;
@@ -852,35 +854,23 @@ async function followJobLog(workspaceRoot, initialJob, timeoutMs) {
         fs.closeSync(fd);
       }
     } catch {}
-  }
+  };
+
+  drainLog();
 
   while (Date.now() < deadline) {
     const fresh = readStoredJob(workspaceRoot, job.id) ?? job;
     job = fresh;
+    drainLog();
 
-    if (logFile) {
-      try {
-        const stat = fs.statSync(logFile);
-        if (stat.size > offset) {
-          const fd = fs.openSync(logFile, "r");
-          try {
-            const CHUNK = 64 * 1024;
-            const buf = Buffer.alloc(CHUNK);
-            while (offset < stat.size) {
-              const want = Math.min(CHUNK, stat.size - offset);
-              const got = fs.readSync(fd, buf, 0, want, offset);
-              if (got <= 0) break;
-              process.stdout.write(buf.slice(0, got).toString("utf8"));
-              offset += got;
-            }
-          } finally {
-            fs.closeSync(fd);
-          }
-        }
-      } catch {}
+    if (!isActiveJobStatus(job.status)) {
+      // The worker writes the "Final output" block AFTER flipping status to
+      // completed (see tracked-jobs.mjs). Wait briefly and drain once more so
+      // --follow doesn't return before the trailing chunk is on disk.
+      await new Promise((r) => setTimeout(r, 500));
+      drainLog();
+      return job;
     }
-
-    if (!isActiveJobStatus(job.status)) return job;
     await new Promise((r) => setTimeout(r, 1000));
   }
 
