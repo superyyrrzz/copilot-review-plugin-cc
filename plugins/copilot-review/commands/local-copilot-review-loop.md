@@ -14,7 +14,7 @@ Additional context from user: $ARGUMENTS
 
 ## Running the CLI
 
-Use the ACP companion script for structured, session-based reviews. Run in **background mode** so progress is visible via `/copilot-review:status`:
+Use the ACP companion script for structured, session-based reviews. Run in **background mode** so progress is visible via the `status` subcommand:
 
 ```bash
 # Launch a background review (returns immediately with job ID)
